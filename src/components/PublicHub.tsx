@@ -7,7 +7,6 @@ import {
   Copy,
   Info,
   Landmark,
-  Lock,
   MapPin,
   MessageCircle,
   Navigation,
@@ -38,7 +37,6 @@ interface PublicHubProps {
   branches: BranchLocation[];
   wallets: WalletAccount[];
   bankAccounts: BankAccount[];
-  onOpenAdmin: () => void;
 }
 
 export function PublicHub({
@@ -47,7 +45,6 @@ export function PublicHub({
   branches,
   wallets,
   bankAccounts,
-  onOpenAdmin,
 }: PublicHubProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -736,16 +733,8 @@ export function PublicHub({
 
       {/* Quiet Footer */}
       <footer className="border-t border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-950/70 py-6 px-4 sm:px-6">
-        <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500 dark:text-slate-400">
+        <div className="max-w-5xl mx-auto flex items-center justify-center text-center text-xs text-slate-500 dark:text-slate-400">
           <p>© {new Date().getFullYear()} {config.brandName}. جميع الحقوق محفوظة.</p>
-          <button
-            type="button"
-            onClick={onOpenAdmin}
-            className="min-h-[40px] px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-200 flex items-center gap-1.5 transition-colors whitespace-nowrap"
-          >
-            <Lock className="w-3.5 h-3.5" />
-            <span>لوحة تحكم الإدارة</span>
-          </button>
         </div>
       </footer>
 
