@@ -1,0 +1,157 @@
+{
+  "entities": {
+    "SiteConfig": {
+      "title": "SiteConfig",
+      "description": "Global brand identity, theme customization, section ordering, and payment instructions.",
+      "type": "object",
+      "properties": {
+        "brandName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "brandTagline": { "type": "string", "maxLength": 300 },
+        "logoUrl": { "type": "string", "maxLength": 150000 },
+        "primaryColor": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "surfaceMode": { "type": "string", "enum": ["light", "dark"] },
+        "accentStyle": { "type": "string", "enum": ["emerald", "gold", "navy", "obsidian", "custom"] },
+        "whatsappFloatNumber": { "type": "string", "maxLength": 30 },
+        "whatsappFloatEnabled": { "type": "boolean" },
+        "paymentInstructions": { "type": "string", "maxLength": 1200 },
+        "beneficiaryWarning": { "type": "string", "maxLength": 400 },
+        "sectionOrder": { "type": "array" },
+        "sectionVisibility": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "maxLength": 128 }
+      },
+      "required": [
+        "brandName",
+        "brandTagline",
+        "logoUrl",
+        "primaryColor",
+        "surfaceMode",
+        "accentStyle",
+        "whatsappFloatNumber",
+        "whatsappFloatEnabled",
+        "paymentInstructions",
+        "beneficiaryWarning",
+        "sectionOrder",
+        "sectionVisibility",
+        "createdAt",
+        "updatedAt",
+        "updatedBy"
+      ]
+    },
+    "SocialLink": {
+      "title": "SocialLink",
+      "description": "Public social media or website link card.",
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "string",
+          "enum": ["facebook", "instagram", "tiktok", "whatsapp", "telegram", "youtube", "website", "x", "linkedin", "snapchat"]
+        },
+        "label": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "url": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "subtitle": { "type": "string", "maxLength": 120 },
+        "visible": { "type": "boolean" },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["platform", "label", "url", "subtitle", "visible", "order", "createdAt", "updatedAt", "updatedBy"]
+    },
+    "WalletAccount": {
+      "title": "WalletAccount",
+      "description": "Mobile or instant e-wallet receiving details.",
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["vodafone", "orange", "etisalat", "wepay", "instapay", "other"]
+        },
+        "providerName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "identifier": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "ownerName": { "type": "string", "maxLength": 120 },
+        "showOwnerName": { "type": "boolean" },
+        "note": { "type": "string", "maxLength": 200 },
+        "visible": { "type": "boolean" },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["provider", "providerName", "identifier", "ownerName", "showOwnerName", "note", "visible", "order", "createdAt", "updatedAt", "updatedBy"]
+    },
+    "BankAccount": {
+      "title": "BankAccount",
+      "description": "Bank transfer receiving account details.",
+      "type": "object",
+      "properties": {
+        "bankName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "accountHolder": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "accountNumber": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "iban": { "type": "string", "maxLength": 80 },
+        "currency": { "type": "string", "minLength": 1, "maxLength": 20 },
+        "branchName": { "type": "string", "maxLength": 120 },
+        "visible": { "type": "boolean" },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["bankName", "accountHolder", "accountNumber", "iban", "currency", "branchName", "visible", "order", "createdAt", "updatedAt", "updatedBy"]
+    },
+    "BranchLocation": {
+      "title": "BranchLocation",
+      "description": "Physical store branch or service center with address and Google Maps link.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "address": { "type": "string", "minLength": 1, "maxLength": 250 },
+        "mapUrl": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "visible": { "type": "boolean" },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["name", "address", "mapUrl", "visible", "order", "createdAt", "updatedAt", "updatedBy"]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized admin role mapping.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 180 },
+        "role": { "type": "string", "enum": ["admin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/siteConfig/{configId}": {
+      "schema": "SiteConfig",
+      "description": "Public brand configuration and theme settings."
+    },
+    "/socialLinks/{linkId}": {
+      "schema": "SocialLink",
+      "description": "Social media and website link items."
+    },
+    "/branches/{branchId}": {
+      "schema": "BranchLocation",
+      "description": "Physical branch locations and Google Maps links."
+    },
+    "/wallets/{walletId}": {
+      "schema": "WalletAccount",
+      "description": "Electronic wallet payment receiving items."
+    },
+    "/bankAccounts/{bankId}": {
+      "schema": "BankAccount",
+      "description": "Bank transfer receiving account items."
+    },
+    "/admins/{userId}": {
+      "schema": "AdminUser",
+      "description": "Admin role documents."
+    }
+  }
+}
