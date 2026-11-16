@@ -7,12 +7,12 @@ import {
   Copy,
   Info,
   Landmark,
+  Lock,
   MapPin,
   MessageCircle,
   Navigation,
   QrCode,
   Share2,
-  SlidersHorizontal,
   Smartphone,
 } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -743,8 +743,8 @@ export function PublicHub({
             onClick={onOpenAdmin}
             className="min-h-[40px] px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-200 flex items-center gap-1.5 transition-colors whitespace-nowrap"
           >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            <span>تخصيص الصفحة</span>
+            <Lock className="w-3.5 h-3.5" />
+            <span>لوحة تحكم الإدارة</span>
           </button>
         </div>
       </footer>

@@ -1,11 +1,18 @@
 import React, { useEffect, useState } from 'react';
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+  User,
+} from 'firebase/auth';
 import { AdminDashboard } from './components/AdminDashboard';
 import { PublicHub } from './components/PublicHub';
+import { ADMIN_EMAIL, auth, googleProvider } from './lib/firebase';
 import {
+  ensureFirestoreSeeded,
   HubState,
   loadHubState,
-  resetHubState,
-  saveHubState,
+  subscribeToHubState,
 } from './services/hubService';
 
 function isAdminRoute(): boolean {
@@ -60,6 +67,19 @@ class AppErrorBoundary extends React.Component<
 export default function App() {
   const [routeIsAdmin, setRouteIsAdmin] = useState<boolean>(isAdminRoute);
   const [hubState, setHubState] = useState<HubState>(() => loadHubState());
+  const [isCloudSeeded, setIsCloudSeeded] = useState<boolean>(false);
+
+  const [authReady, setAuthReady] = useState<boolean>(false);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
+
+  const isAuthorizedAdmin = Boolean(
+    authUser &&
+      authUser.emailVerified &&
+      authUser.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()
+  );
 
   useEffect(() => {
     const handleNav = () => setRouteIsAdmin(isAdminRoute());
@@ -70,6 +90,53 @@ export default function App() {
       window.removeEventListener('popstate', handleNav);
     };
   }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToHubState(
+      (nextState, seeded) => {
+        setHubState(nextState);
+        setIsCloudSeeded(seeded);
+      },
+      (err) => {
+        console.error('Firestore subscription error:', err);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        const matchesAdmin =
+          user.emailVerified &&
+          user.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+        if (!matchesAdmin) {
+          setAuthError(
+            `تم رفض الدخول: الحساب (${user.email || 'غير معروف'}) غير مصرح له. صفحة التعديل مقفولة ومخصصة فقط لحساب ${ADMIN_EMAIL}.`
+          );
+          await signOut(auth);
+          setAuthUser(null);
+          setAuthReady(true);
+          return;
+        }
+        setAuthError(null);
+        setUnauthorizedDomain(null);
+        setAuthUser(user);
+      } else {
+        setAuthUser(null);
+      }
+      setAuthReady(true);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (isAuthorizedAdmin && !isCloudSeeded) {
+      ensureFirestoreSeeded(hubState).catch((err) => {
+        console.error('Auto-seed error:', err);
+      });
+    }
+  }, [isAuthorizedAdmin, isCloudSeeded]);
 
   const { config, socialLinks, branches, wallets, bankAccounts } = hubState;
 
@@ -97,17 +164,38 @@ export default function App() {
     }
   }, [config]);
 
-  const handleUpdateState = (updater: (prev: HubState) => HubState) => {
-    setHubState((prev) => {
-      const next = updater(prev);
-      saveHubState(next);
-      return next;
-    });
+  const handleSignIn = async () => {
+    setAuthLoading(true);
+    setAuthError(null);
+    setUnauthorizedDomain(null);
+    try {
+      const cred = await signInWithPopup(auth, googleProvider);
+      const email = cred.user.email || '';
+      if (!cred.user.emailVerified || email.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+        await signOut(auth);
+        setAuthError(
+          `تم رفض الدخول: الحساب (${email || 'غير معروف'}) غير مصرح له. صفحة التعديل مخصصة فقط لحساب ${ADMIN_EMAIL}.`
+        );
+      }
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code || '';
+      if (code === 'auth/unauthorized-domain') {
+        setUnauthorizedDomain(window.location.hostname);
+      } else if (code === 'auth/popup-closed-by-user') {
+        setAuthError('تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.');
+      } else if (code === 'auth/popup-blocked') {
+        setAuthError('قام المتصفح بحظر نافذة تسجيل الدخول المنبثقة. يرجى السماح بالنوافذ المنبثقة والمحاولة مرة أخرى.');
+      } else {
+        setAuthError('تعذر تسجيل الدخول حالياً. يرجى المحاولة مرة أخرى.');
+      }
+    } finally {
+      setAuthLoading(false);
+    }
   };
 
-  const handleResetDefaults = () => {
-    const fresh = resetHubState();
-    setHubState(fresh);
+  const handleSignOut = async () => {
+    await signOut(auth);
+    setAuthError(null);
   };
 
   const openAdmin = () => {
@@ -131,8 +219,14 @@ export default function App() {
       {routeIsAdmin ? (
         <AdminDashboard
           state={hubState}
-          onUpdateState={handleUpdateState}
-          onResetDefaults={handleResetDefaults}
+          authReady={authReady}
+          authUser={authUser}
+          isAuthorizedAdmin={isAuthorizedAdmin}
+          authLoading={authLoading}
+          authError={authError}
+          unauthorizedDomain={unauthorizedDomain}
+          onSignIn={handleSignIn}
+          onSignOut={handleSignOut}
           onBackToPublic={openPublic}
         />
       ) : (

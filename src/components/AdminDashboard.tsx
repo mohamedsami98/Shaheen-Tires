@@ -1,12 +1,19 @@
 import React, { useEffect, useState } from 'react';
+import { User } from 'firebase/auth';
 import {
+  AlertCircle,
   ArrowDown,
+  ArrowRight,
   ArrowUp,
   Check,
+  Copy,
   Download,
+  ExternalLink,
   Eye,
   EyeOff,
   Landmark,
+  LogIn,
+  LogOut,
   MapPin,
   Palette,
   Pencil,
@@ -15,12 +22,25 @@ import {
   Save,
   Settings2,
   Share2,
+  ShieldCheck,
   Trash2,
   Upload,
   Wallet,
 } from 'lucide-react';
 import { DEFAULT_LOGO_PATH, DEFAULT_SITE_CONFIG } from '../data/defaultData';
-import { compressLogoImage, HubState } from '../services/hubService';
+import { ADMIN_EMAIL, FIREBASE_PROJECT_ID } from '../lib/firebase';
+import {
+  compressLogoImage,
+  deleteFirestoreDoc,
+  HubState,
+  reorderFirestoreDocs,
+  resetFirestoreToDefaults,
+  saveBankToFirestore,
+  saveBranchToFirestore,
+  saveSiteConfigToFirestore,
+  saveSocialLinkToFirestore,
+  saveWalletToFirestore,
+} from '../services/hubService';
 import {
   BankAccount,
   BranchLocation,
@@ -41,20 +61,34 @@ type AdminTab = 'brand' | 'sections' | 'social' | 'branches' | 'wallets' | 'bank
 
 interface AdminDashboardProps {
   state: HubState;
-  onUpdateState: (updater: (prev: HubState) => HubState) => void;
-  onResetDefaults: () => void;
+  authReady: boolean;
+  authUser: User | null;
+  isAuthorizedAdmin: boolean;
+  authLoading: boolean;
+  authError: string | null;
+  unauthorizedDomain: string | null;
+  onSignIn: () => void;
+  onSignOut: () => void;
   onBackToPublic: () => void;
 }
 
 export function AdminDashboard({
   state,
-  onUpdateState,
-  onResetDefaults,
+  authReady,
+  authUser,
+  isAuthorizedAdmin,
+  authLoading,
+  authError,
+  unauthorizedDomain,
+  onSignIn,
+  onSignOut,
   onBackToPublic,
 }: AdminDashboardProps) {
   const { config, socialLinks, branches, wallets, bankAccounts } = state;
   const [activeTab, setActiveTab] = useState<AdminTab>('brand');
   const [draftConfig, setDraftConfig] = useState<SiteConfig>(config);
+  const [isSaving, setIsSaving] = useState(false);
+  const [copiedDomain, setCopiedDomain] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(
     null
   );
@@ -72,13 +106,28 @@ export function AdminDashboard({
     setStatusMessage({ type, text });
     window.setTimeout(() => {
       setStatusMessage((prev) => (prev?.text === text ? null : prev));
-    }, 3000);
+    }, 3500);
   };
 
-  const handleSaveConfig = (e?: React.FormEvent) => {
+  const runMutation = async (fn: () => Promise<void>, successText: string) => {
+    setIsSaving(true);
+    try {
+      await fn();
+      notify(successText, 'ok');
+    } catch (err) {
+      console.error(err);
+      notify('تعذر حفظ التعديل في السحابة، تأكد من الصلاحيات والاتصال.', 'err');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveConfig = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    onUpdateState((prev) => ({ ...prev, config: draftConfig }));
-    notify('تم حفظ إعدادات الهوية والألوان والأقسام بنجاح');
+    await runMutation(
+      () => saveSiteConfigToFirestore(draftConfig),
+      'تم حفظ الإعدادات ونشرها للجميع بنجاح'
+    );
   };
 
   const handleLogoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -87,7 +136,7 @@ export function AdminDashboard({
     try {
       const compressedDataUrl = await compressLogoImage(file);
       setDraftConfig((prev) => ({ ...prev, logoUrl: compressedDataUrl }));
-      notify('تم تجهيز الشعار الجديد، اضغط على حفظ التغييرات لتثبيته');
+      notify('تم تجهيز الشعار الجديد، اضغط على حفظ الهوية والألوان لتثبيته');
     } catch (err) {
       notify(err instanceof Error ? err.message : 'فشل تحميل الشعار', 'err');
     }
@@ -128,13 +177,130 @@ export function AdminDashboard({
     notify('تم تصدير ملف الإعدادات بنجاح');
   };
 
+  const handleCopyDomain = async (domain: string) => {
+    try {
+      await navigator.clipboard.writeText(domain);
+      setCopiedDomain(true);
+      window.setTimeout(() => setCopiedDomain(false), 2000);
+    } catch {
+      // Ignore clipboard error
+    }
+  };
+
+  if (!authReady) {
+    return (
+      <div
+        dir="rtl"
+        className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F17] text-slate-900 dark:text-slate-100 flex items-center justify-center p-6"
+      >
+        <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-6 py-5 text-sm font-medium">
+          جاري التحقق من جلسة الإدارة...
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthorizedAdmin) {
+    const authorizedDomainsUrl = `https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/settings`;
+    return (
+      <div
+        dir="rtl"
+        className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F17] text-slate-900 dark:text-slate-100 flex items-center justify-center p-4 sm:p-6"
+      >
+        <div className="max-w-md w-full rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 sm:p-8 shadow-sm space-y-5">
+          <div className="w-12 h-12 rounded-2xl bg-slate-950 dark:bg-white text-white dark:text-slate-950 flex items-center justify-center">
+            <ShieldCheck className="w-6 h-6" />
+          </div>
+
+          <div className="space-y-2">
+            <h1 className="text-xl sm:text-2xl font-extrabold text-slate-950 dark:text-white">
+              تسجيل دخول لوحة التحكم
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              هذه الصفحة مقفولة ومخصصة فقط لحساب الإدارة{' '}
+              <span dir="ltr" className="font-mono-nums font-semibold text-slate-900 dark:text-white">
+                ({ADMIN_EMAIL})
+              </span>{' '}
+              لتعديل الروابط والفروع والمحافظ وحفظها مباشرة في الموقع المنشور.
+            </p>
+          </div>
+
+          {unauthorizedDomain && (
+            <div className="p-4 rounded-2xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300 space-y-2.5 leading-relaxed">
+              <div className="flex items-start gap-2 font-bold">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  النطاق الحالي (<span dir="ltr" className="font-mono-nums">{unauthorizedDomain}</span>) غير مضاف بعد في إعدادات Firebase.
+                </span>
+              </div>
+              <ol className="list-decimal list-inside space-y-1 text-[11px] sm:text-xs">
+                <li>افتح إعدادات Firebase بالزر أدناه</li>
+                <li>اختر تبويب <strong dir="ltr">Authorized domains</strong> ثم اضغط <strong dir="ltr">Add domain</strong></li>
+                <li>أضف النطاق واحفظه ثم أعد الضغط على تسجيل الدخول</li>
+              </ol>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleCopyDomain(unauthorizedDomain)}
+                  className="min-h-[34px] px-3 rounded-lg bg-white dark:bg-slate-900 border border-red-200 dark:border-red-800 text-[11px] font-semibold flex items-center gap-1.5"
+                >
+                  {copiedDomain ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span dir="ltr" className="font-mono-nums">
+                    {copiedDomain ? 'تم النسخ' : unauthorizedDomain}
+                  </span>
+                </button>
+                <a
+                  href={authorizedDomainsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="min-h-[34px] px-3 rounded-lg bg-red-600 text-white text-[11px] font-semibold flex items-center gap-1.5 hover:bg-red-700"
+                >
+                  <span>فتح Authorized domains</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+            </div>
+          )}
+
+          {authError && (
+            <div className="p-3.5 rounded-2xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300 flex items-start gap-2 leading-relaxed">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{authError}</span>
+            </div>
+          )}
+
+          <div className="space-y-2.5 pt-1">
+            <button
+              type="button"
+              disabled={authLoading}
+              onClick={onSignIn}
+              className="w-full min-h-[48px] px-5 py-3 rounded-2xl bg-slate-950 dark:bg-white text-white dark:text-slate-950 text-sm font-bold flex items-center justify-center gap-2 hover:opacity-90 disabled:opacity-50 transition-opacity"
+            >
+              <LogIn className="w-4 h-4" />
+              <span>{authLoading ? 'جاري تسجيل الدخول...' : 'تسجيل الدخول بحساب Google'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onBackToPublic}
+              className="w-full min-h-[46px] px-5 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm font-semibold flex items-center justify-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            >
+              <ArrowRight className="w-4 h-4" />
+              <span>العودة إلى الصفحة العامة</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F17] text-slate-900 dark:text-slate-100">
+    <div dir="rtl" className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F17] text-slate-900 dark:text-slate-100">
       <header className="sticky top-0 z-30 h-15 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
         <div className="max-w-6xl mx-auto h-full px-4 sm:px-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <span className="text-base sm:text-lg font-bold text-slate-900 dark:text-white whitespace-nowrap truncate">
-              محرر صفحة شاهين للإطارات والبطاريات
+              لوحة تحكم شاهين للإطارات والبطاريات
             </span>
           </div>
 
@@ -146,6 +312,14 @@ export function AdminDashboard({
             >
               <Download className="w-4 h-4" />
               <span className="hidden sm:inline">تصدير JSON</span>
+            </button>
+            <button
+              type="button"
+              onClick={onSignOut}
+              className="min-h-[40px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">خروج</span>
             </button>
             <button
               type="button"
@@ -162,16 +336,24 @@ export function AdminDashboard({
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6 pb-20">
         <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300">
-            وضع التخصيص المحلي بدون قواعد بيانات خارجية — تُحفظ التعديلات في هذا المتصفح ويمكنك تصديرها كملف JSON.
-          </p>
+          <div className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 flex flex-wrap items-center gap-2">
+            <span>الحساب النشط:</span>
+            <span dir="ltr" className="font-mono-nums font-semibold text-slate-900 dark:text-white">
+              {authUser?.email || ADMIN_EMAIL}
+            </span>
+            {isSaving && (
+              <span className="text-xs text-slate-500">· جاري الحفظ في السحابة...</span>
+            )}
+          </div>
           <button
             type="button"
-            onClick={() => {
-              onResetDefaults();
-              notify('تمت استعادة الإعدادات الافتراضية لشركة شاهين');
-            }}
-            className="min-h-[38px] px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+            disabled={isSaving}
+            onClick={() =>
+              runMutation(async () => {
+                await resetFirestoreToDefaults();
+              }, 'تمت استعادة الإعدادات الافتراضية لشركة شاهين ونشرها')
+            }
+            className="min-h-[38px] px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-1.5 shrink-0 whitespace-nowrap disabled:opacity-50"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span>استعادة الافتراضي</span>
@@ -577,15 +759,11 @@ export function AdminDashboard({
                 primaryColor={draftConfig.primaryColor}
                 onCancel={() => setEditingSocial(null)}
                 onSave={(item) => {
-                  onUpdateState((prev) => {
-                    const exists = prev.socialLinks.some((s) => s.id === item.id);
-                    const socialLinksNext = exists
-                      ? prev.socialLinks.map((s) => (s.id === item.id ? item : s))
-                      : [...prev.socialLinks, item];
-                    return { ...prev, socialLinks: socialLinksNext };
-                  });
                   setEditingSocial(null);
-                  notify('تم حفظ رابط التواصل بنجاح');
+                  void runMutation(
+                    () => saveSocialLinkToFirestore(item),
+                    'تم حفظ رابط التواصل بنجاح'
+                  );
                 }}
               />
             )}
@@ -614,12 +792,10 @@ export function AdminDashboard({
                     <button
                       type="button"
                       onClick={() =>
-                        onUpdateState((prev) => ({
-                          ...prev,
-                          socialLinks: prev.socialLinks.map((s) =>
-                            s.id === link.id ? { ...s, visible: !s.visible } : s
-                          ),
-                        }))
+                        void runMutation(
+                          () => saveSocialLinkToFirestore({ ...link, visible: !link.visible }),
+                          link.visible ? 'تم إخفاء الرابط' : 'تم إظهار الرابط'
+                        )
                       }
                       className="min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1"
                     >
@@ -630,10 +806,14 @@ export function AdminDashboard({
                       type="button"
                       disabled={idx === 0}
                       onClick={() =>
-                        onUpdateState((prev) => ({
-                          ...prev,
-                          socialLinks: moveArrayItem(prev.socialLinks, idx, -1),
-                        }))
+                        void runMutation(
+                          () =>
+                            reorderFirestoreDocs(
+                              'socialLinks',
+                              moveArrayItem(socialLinks, idx, -1)
+                            ),
+                          'تم تحديث ترتيب الروابط'
+                        )
                       }
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
                       aria-label="تحريك لأعلى"
@@ -644,10 +824,14 @@ export function AdminDashboard({
                       type="button"
                       disabled={idx === socialLinks.length - 1}
                       onClick={() =>
-                        onUpdateState((prev) => ({
-                          ...prev,
-                          socialLinks: moveArrayItem(prev.socialLinks, idx, 1),
-                        }))
+                        void runMutation(
+                          () =>
+                            reorderFirestoreDocs(
+                              'socialLinks',
+                              moveArrayItem(socialLinks, idx, 1)
+                            ),
+                          'تم تحديث ترتيب الروابط'
+                        )
                       }
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
                       aria-label="تحريك لأسفل"
@@ -664,13 +848,12 @@ export function AdminDashboard({
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        onUpdateState((prev) => ({
-                          ...prev,
-                          socialLinks: prev.socialLinks.filter((s) => s.id !== link.id),
-                        }));
-                        notify('تم حذف الرابط');
-                      }}
+                      onClick={() =>
+                        void runMutation(
+                          () => deleteFirestoreDoc('socialLinks', link.id),
+                          'تم حذف الرابط'
+                        )
+                      }
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-red-200 dark:border-red-900 text-red-600 flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950/30"
                       aria-label="حذف"
                     >
@@ -719,15 +902,11 @@ export function AdminDashboard({
                 primaryColor={draftConfig.primaryColor}
                 onCancel={() => setEditingBranch(null)}
                 onSave={(item) => {
-                  onUpdateState((prev) => {
-                    const exists = prev.branches.some((b) => b.id === item.id);
-                    const branchesNext = exists
-                      ? prev.branches.map((b) => (b.id === item.id ? item : b))
-                      : [...prev.branches, item];
-                    return { ...prev, branches: branchesNext };
-                  });
                   setEditingBranch(null);
-                  notify('تم حفظ بيانات الفرع بنجاح');
+                  void runMutation(
+                    () => saveBranchToFirestore(item),
+                    'تم حفظ بيانات الفرع بنجاح'
+                  );
                 }}
               />
             )}
@@ -755,12 +934,10 @@ export function AdminDashboard({
                     <button
                       type="button"
                       onClick={() =>
-                        onUpdateState((prev) => ({
-                          ...prev,
-                          branches: prev.branches.map((b) =>
-                            b.id === branch.id ? { ...b, visible: !b.visible } : b
-                          ),
-                        }))
+                        void runMutation(
+                          () => saveBranchToFirestore({ ...branch, visible: !branch.visible }),
+                          branch.visible ? 'تم إخفاء الفرع' : 'تم إظهار الفرع'
+                        )
                       }
                       className="min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1"
                     >
@@ -771,10 +948,14 @@ export function AdminDashboard({
                       type="button"
                       disabled={idx === 0}
                       onClick={() =>
-                        onUpdateState((prev) => ({
-                          ...prev,
-                          branches: moveArrayItem(prev.branches, idx, -1),
-                        }))
+                        void runMutation(
+                          () =>
+                            reorderFirestoreDocs(
+                              'branches',
+                              moveArrayItem(branches, idx, -1)
+                            ),
+                          'تم تحديث ترتيب الفروع'
+                        )
                       }
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
                       aria-label="تحريك لأعلى"
@@ -785,10 +966,14 @@ export function AdminDashboard({
                       type="button"
                       disabled={idx === branches.length - 1}
                       onClick={() =>
-                        onUpdateState((prev) => ({
-                          ...prev,
-                          branches: moveArrayItem(prev.branches, idx, 1),
-                        }))
+                        void runMutation(
+                          () =>
+                            reorderFirestoreDocs(
+                              'branches',
+                              moveArrayItem(branches, idx, 1)
+                            ),
+                          'تم تحديث ترتيب الفروع'
+                        )
                       }
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
                       aria-label="تحريك لأسفل"
@@ -805,13 +990,12 @@ export function AdminDashboard({
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        onUpdateState((prev) => ({
-                          ...prev,
-                          branches: prev.branches.filter((b) => b.id !== branch.id),
-                        }));
-                        notify('تم حذف الفرع');
-                      }}
+                      onClick={() =>
+                        void runMutation(
+                          () => deleteFirestoreDoc('branches', branch.id),
+                          'تم حذف الفرع'
+                        )
+                      }
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-red-200 dark:border-red-900 text-red-600 flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950/30"
                       aria-label="حذف"
                     >
@@ -863,15 +1047,11 @@ export function AdminDashboard({
                 primaryColor={draftConfig.primaryColor}
                 onCancel={() => setEditingWallet(null)}
                 onSave={(item) => {
-                  onUpdateState((prev) => {
-                    const exists = prev.wallets.some((w) => w.id === item.id);
-                    const walletsNext = exists
-                      ? prev.wallets.map((w) => (w.id === item.id ? item : w))
-                      : [...prev.wallets, item];
-                    return { ...prev, wallets: walletsNext };
-                  });
                   setEditingWallet(null);
-                  notify('تم حفظ بيانات المحفظة بنجاح');
+                  void runMutation(
+                    () => saveWalletToFirestore(item),
+                    'تم حفظ بيانات المحفظة بنجاح'
+                  );
                 }}
               />
             )}
@@ -899,12 +1079,10 @@ export function AdminDashboard({
                     <button
                       type="button"
                       onClick={() =>
-                        onUpdateState((prev) => ({
-                          ...prev,
-                          wallets: prev.wallets.map((w) =>
-                            w.id === wallet.id ? { ...w, visible: !w.visible } : w
-                          ),
-                        }))
+                        void runMutation(
+                          () => saveWalletToFirestore({ ...wallet, visible: !wallet.visible }),
+                          wallet.visible ? 'تم إخفاء المحفظة' : 'تم إظهار المحفظة'
+                        )
                       }
                       className="min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1"
                     >
@@ -915,10 +1093,14 @@ export function AdminDashboard({
                       type="button"
                       disabled={idx === 0}
                       onClick={() =>
-                        onUpdateState((prev) => ({
-                          ...prev,
-                          wallets: moveArrayItem(prev.wallets, idx, -1),
-                        }))
+                        void runMutation(
+                          () =>
+                            reorderFirestoreDocs(
+                              'wallets',
+                              moveArrayItem(wallets, idx, -1)
+                            ),
+                          'تم تحديث ترتيب المحافظ'
+                        )
                       }
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
                       aria-label="تحريك لأعلى"
@@ -929,10 +1111,14 @@ export function AdminDashboard({
                       type="button"
                       disabled={idx === wallets.length - 1}
                       onClick={() =>
-                        onUpdateState((prev) => ({
-                          ...prev,
-                          wallets: moveArrayItem(prev.wallets, idx, 1),
-                        }))
+                        void runMutation(
+                          () =>
+                            reorderFirestoreDocs(
+                              'wallets',
+                              moveArrayItem(wallets, idx, 1)
+                            ),
+                          'تم تحديث ترتيب المحافظ'
+                        )
                       }
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
                       aria-label="تحريك لأسفل"
@@ -949,13 +1135,12 @@ export function AdminDashboard({
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        onUpdateState((prev) => ({
-                          ...prev,
-                          wallets: prev.wallets.filter((w) => w.id !== wallet.id),
-                        }));
-                        notify('تم حذف المحفظة');
-                      }}
+                      onClick={() =>
+                        void runMutation(
+                          () => deleteFirestoreDoc('wallets', wallet.id),
+                          'تم حذف المحفظة'
+                        )
+                      }
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-red-200 dark:border-red-900 text-red-600 flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950/30"
                       aria-label="حذف"
                     >
@@ -1007,15 +1192,11 @@ export function AdminDashboard({
                 primaryColor={draftConfig.primaryColor}
                 onCancel={() => setEditingBank(null)}
                 onSave={(item) => {
-                  onUpdateState((prev) => {
-                    const exists = prev.bankAccounts.some((b) => b.id === item.id);
-                    const banksNext = exists
-                      ? prev.bankAccounts.map((b) => (b.id === item.id ? item : b))
-                      : [...prev.bankAccounts, item];
-                    return { ...prev, bankAccounts: banksNext };
-                  });
                   setEditingBank(null);
-                  notify('تم حفظ الحساب البنكي بنجاح');
+                  void runMutation(
+                    () => saveBankToFirestore(item),
+                    'تم حفظ الحساب البنكي بنجاح'
+                  );
                 }}
               />
             )}
@@ -1050,12 +1231,10 @@ export function AdminDashboard({
                       <button
                         type="button"
                         onClick={() =>
-                          onUpdateState((prev) => ({
-                            ...prev,
-                            bankAccounts: prev.bankAccounts.map((b) =>
-                              b.id === bank.id ? { ...b, visible: !b.visible } : b
-                            ),
-                          }))
+                          void runMutation(
+                            () => saveBankToFirestore({ ...bank, visible: !bank.visible }),
+                            bank.visible ? 'تم إخفاء الحساب البنكي' : 'تم إظهار الحساب البنكي'
+                          )
                         }
                         className="min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1"
                       >
@@ -1066,10 +1245,14 @@ export function AdminDashboard({
                         type="button"
                         disabled={idx === 0}
                         onClick={() =>
-                          onUpdateState((prev) => ({
-                            ...prev,
-                            bankAccounts: moveArrayItem(prev.bankAccounts, idx, -1),
-                          }))
+                          void runMutation(
+                            () =>
+                              reorderFirestoreDocs(
+                                'bankAccounts',
+                                moveArrayItem(bankAccounts, idx, -1)
+                              ),
+                            'تم تحديث ترتيب الحسابات البنكية'
+                          )
                         }
                         className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
                         aria-label="تحريك لأعلى"
@@ -1080,10 +1263,14 @@ export function AdminDashboard({
                         type="button"
                         disabled={idx === bankAccounts.length - 1}
                         onClick={() =>
-                          onUpdateState((prev) => ({
-                            ...prev,
-                            bankAccounts: moveArrayItem(prev.bankAccounts, idx, 1),
-                          }))
+                          void runMutation(
+                            () =>
+                              reorderFirestoreDocs(
+                                'bankAccounts',
+                                moveArrayItem(bankAccounts, idx, 1)
+                              ),
+                            'تم تحديث ترتيب الحسابات البنكية'
+                          )
                         }
                         className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
                         aria-label="تحريك لأسفل"
@@ -1100,13 +1287,12 @@ export function AdminDashboard({
                       </button>
                       <button
                         type="button"
-                        onClick={() => {
-                          onUpdateState((prev) => ({
-                            ...prev,
-                            bankAccounts: prev.bankAccounts.filter((b) => b.id !== bank.id),
-                          }));
-                          notify('تم حذف الحساب البنكي');
-                        }}
+                        onClick={() =>
+                          void runMutation(
+                            () => deleteFirestoreDoc('bankAccounts', bank.id),
+                            'تم حذف الحساب البنكي'
+                          )
+                        }
                         className="min-h-[38px] min-w-[38px] rounded-lg border border-red-200 dark:border-red-900 text-red-600 flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950/30"
                         aria-label="حذف"
                       >
