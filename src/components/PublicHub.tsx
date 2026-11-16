@@ -7,12 +7,12 @@ import {
   Copy,
   Info,
   Landmark,
-  Lock,
   MapPin,
   MessageCircle,
   Navigation,
   QrCode,
   Share2,
+  SlidersHorizontal,
   Smartphone,
 } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -38,7 +38,6 @@ interface PublicHubProps {
   branches: BranchLocation[];
   wallets: WalletAccount[];
   bankAccounts: BankAccount[];
-  isUsingDemoFallback: boolean;
   onOpenAdmin: () => void;
 }
 
@@ -48,7 +47,6 @@ export function PublicHub({
   branches,
   wallets,
   bankAccounts,
-  isUsingDemoFallback,
   onOpenAdmin,
 }: PublicHubProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -720,19 +718,6 @@ export function PublicHub({
                   {config.brandTagline}
                 </p>
               )}
-              {isUsingDemoFallback && (
-                <div className="mt-4 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
-                  <span>وضع المعاينة الأولي</span>
-                  <span aria-hidden="true">·</span>
-                  <button
-                    type="button"
-                    onClick={onOpenAdmin}
-                    className="underline font-medium hover:text-slate-900 dark:hover:text-white transition-colors"
-                  >
-                    سجل الدخول للإدارة لتفعيل التعديل المباشر
-                  </button>
-                </div>
-              )}
             </div>
           </div>
         </section>
@@ -758,8 +743,8 @@ export function PublicHub({
             onClick={onOpenAdmin}
             className="min-h-[40px] px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-200 flex items-center gap-1.5 transition-colors whitespace-nowrap"
           >
-            <Lock className="w-3.5 h-3.5" />
-            <span>لوحة تحكم الإدارة</span>
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <span>تخصيص الصفحة</span>
           </button>
         </div>
       </footer>

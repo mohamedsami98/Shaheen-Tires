@@ -1,30 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { onAuthStateChanged, User } from 'firebase/auth';
 import { AdminDashboard } from './components/AdminDashboard';
 import { PublicHub } from './components/PublicHub';
 import {
-  DEFAULT_BANK_ACCOUNTS,
-  DEFAULT_BRANCHES,
-  DEFAULT_SITE_CONFIG,
-  DEFAULT_SOCIAL_LINKS,
-  DEFAULT_WALLETS,
-} from './data/defaultData';
-import { auth } from './lib/firebase';
-import {
-  subscribeBankAccounts,
-  subscribeBranches,
-  subscribeSiteConfig,
-  subscribeSocialLinks,
-  subscribeWallets,
-  verifyAdminAccess,
+  HubState,
+  loadHubState,
+  resetHubState,
+  saveHubState,
 } from './services/hubService';
-import {
-  BankAccount,
-  BranchLocation,
-  SiteConfig,
-  SocialLink,
-  WalletAccount,
-} from './types/hub';
 
 function isAdminRoute(): boolean {
   if (typeof window === 'undefined') return false;
@@ -77,17 +59,7 @@ class AppErrorBoundary extends React.Component<
 
 export default function App() {
   const [routeIsAdmin, setRouteIsAdmin] = useState<boolean>(isAdminRoute);
-  const [user, setUser] = useState<User | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [adminCheckLoading, setAdminCheckLoading] = useState(false);
-
-  const [dbConfig, setDbConfig] = useState<SiteConfig | null>(null);
-  const [existsInDb, setExistsInDb] = useState(false);
-  const [dbSocial, setDbSocial] = useState<SocialLink[]>([]);
-  const [dbBranches, setDbBranches] = useState<BranchLocation[]>([]);
-  const [dbWallets, setDbWallets] = useState<WalletAccount[]>([]);
-  const [dbBanks, setDbBanks] = useState<BankAccount[]>([]);
+  const [hubState, setHubState] = useState<HubState>(() => loadHubState());
 
   useEffect(() => {
     const handleNav = () => setRouteIsAdmin(isAdminRoute());
@@ -99,76 +71,44 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      setAuthLoading(false);
-      if (currentUser) {
-        setAdminCheckLoading(true);
-        const allowed = await verifyAdminAccess(currentUser);
-        setIsAdmin(allowed);
-        setAdminCheckLoading(false);
-      } else {
-        setIsAdmin(false);
-        setAdminCheckLoading(false);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    const unsubConfig = subscribeSiteConfig((cfg, exists) => {
-      setDbConfig(cfg);
-      setExistsInDb(exists);
-    });
-    return () => unsubConfig();
-  }, []);
-
-  useEffect(() => {
-    if (authLoading || adminCheckLoading) return;
-    const includeHidden = isAdmin;
-    const unsubSocial = subscribeSocialLinks(includeHidden, setDbSocial);
-    const unsubBranches = subscribeBranches(includeHidden, setDbBranches);
-    const unsubWallets = subscribeWallets(includeHidden, setDbWallets);
-    const unsubBanks = subscribeBankAccounts(includeHidden, setDbBanks);
-    return () => {
-      unsubSocial();
-      unsubBranches();
-      unsubWallets();
-      unsubBanks();
-    };
-  }, [authLoading, adminCheckLoading, isAdmin]);
-
-  const activeConfig = existsInDb && dbConfig ? dbConfig : DEFAULT_SITE_CONFIG;
-  const activeSocial = existsInDb ? dbSocial : DEFAULT_SOCIAL_LINKS;
-  const activeBranches =
-    existsInDb && dbBranches.length > 0 ? dbBranches : existsInDb ? dbBranches : DEFAULT_BRANCHES;
-  const activeWallets = existsInDb ? dbWallets : DEFAULT_WALLETS;
-  const activeBanks = existsInDb ? dbBanks : DEFAULT_BANK_ACCOUNTS;
+  const { config, socialLinks, branches, wallets, bankAccounts } = hubState;
 
   useEffect(() => {
     const root = document.documentElement;
-    if (activeConfig.surfaceMode === 'dark') {
+    if (config.surfaceMode === 'dark') {
       root.classList.add('dark');
     } else {
       root.classList.remove('dark');
     }
-    root.style.setProperty('--brand-accent', activeConfig.primaryColor);
-    document.title = `${activeConfig.brandName} | الروابط والفروع وطرق الدفع`;
+    root.style.setProperty('--brand-accent', config.primaryColor);
+    document.title = `${config.brandName} | الروابط والفروع وطرق الدفع`;
 
     const metaDesc = document.querySelector('meta[name="description"]');
-    if (metaDesc && activeConfig.brandTagline) {
-      metaDesc.setAttribute('content', activeConfig.brandTagline);
+    if (metaDesc && config.brandTagline) {
+      metaDesc.setAttribute('content', config.brandTagline);
     }
     const ogTitle = document.querySelector('meta[property="og:title"]');
     if (ogTitle) {
-      ogTitle.setAttribute('content', activeConfig.brandName);
+      ogTitle.setAttribute('content', config.brandName);
     }
     const ogDesc = document.querySelector('meta[property="og:description"]');
-    if (ogDesc && activeConfig.brandTagline) {
-      ogDesc.setAttribute('content', activeConfig.brandTagline);
+    if (ogDesc && config.brandTagline) {
+      ogDesc.setAttribute('content', config.brandTagline);
     }
-  }, [activeConfig]);
+  }, [config]);
+
+  const handleUpdateState = (updater: (prev: HubState) => HubState) => {
+    setHubState((prev) => {
+      const next = updater(prev);
+      saveHubState(next);
+      return next;
+    });
+  };
+
+  const handleResetDefaults = () => {
+    const fresh = resetHubState();
+    setHubState(fresh);
+  };
 
   const openAdmin = () => {
     window.location.hash = '#/admin';
@@ -190,26 +130,18 @@ export default function App() {
     <AppErrorBoundary>
       {routeIsAdmin ? (
         <AdminDashboard
-          user={user}
-          authLoading={authLoading}
-          isAdmin={isAdmin}
-          adminCheckLoading={adminCheckLoading}
-          existsInDb={existsInDb}
-          config={activeConfig}
-          socialLinks={activeSocial}
-          branches={activeBranches}
-          wallets={activeWallets}
-          bankAccounts={activeBanks}
+          state={hubState}
+          onUpdateState={handleUpdateState}
+          onResetDefaults={handleResetDefaults}
           onBackToPublic={openPublic}
         />
       ) : (
         <PublicHub
-          config={activeConfig}
-          socialLinks={activeSocial}
-          branches={activeBranches}
-          wallets={activeWallets}
-          bankAccounts={activeBanks}
-          isUsingDemoFallback={!existsInDb}
+          config={config}
+          socialLinks={socialLinks}
+          branches={branches}
+          wallets={wallets}
+          bankAccounts={bankAccounts}
           onOpenAdmin={openAdmin}
         />
       )}

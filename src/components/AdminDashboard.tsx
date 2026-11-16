@@ -1,16 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { signInWithPopup, signOut, User } from 'firebase/auth';
 import {
   ArrowDown,
-  ArrowRight,
   ArrowUp,
   Check,
-  Database,
+  Download,
   Eye,
   EyeOff,
   Landmark,
-  LogIn,
-  LogOut,
   MapPin,
   Palette,
   Pencil,
@@ -19,28 +15,12 @@ import {
   Save,
   Settings2,
   Share2,
-  ShieldAlert,
-  ShieldCheck,
   Trash2,
   Upload,
   Wallet,
 } from 'lucide-react';
 import { DEFAULT_LOGO_PATH, DEFAULT_SITE_CONFIG } from '../data/defaultData';
-import { auth, googleProvider } from '../lib/firebase';
-import {
-  compressLogoImage,
-  deleteBankAccount,
-  deleteBranch,
-  deleteSocialLink,
-  deleteWallet,
-  saveSiteConfig,
-  seedDemoDataToFirestore,
-  updateCollectionOrder,
-  upsertBankAccount,
-  upsertBranch,
-  upsertSocialLink,
-  upsertWallet,
-} from '../services/hubService';
+import { compressLogoImage, HubState } from '../services/hubService';
 import {
   BankAccount,
   BranchLocation,
@@ -60,39 +40,24 @@ import { SocialPlatformIcon, WalletProviderMark } from './BrandIcons';
 type AdminTab = 'brand' | 'sections' | 'social' | 'branches' | 'wallets' | 'banks';
 
 interface AdminDashboardProps {
-  user: User | null;
-  authLoading: boolean;
-  isAdmin: boolean;
-  adminCheckLoading: boolean;
-  existsInDb: boolean;
-  config: SiteConfig;
-  socialLinks: SocialLink[];
-  branches: BranchLocation[];
-  wallets: WalletAccount[];
-  bankAccounts: BankAccount[];
+  state: HubState;
+  onUpdateState: (updater: (prev: HubState) => HubState) => void;
+  onResetDefaults: () => void;
   onBackToPublic: () => void;
 }
 
 export function AdminDashboard({
-  user,
-  authLoading,
-  isAdmin,
-  adminCheckLoading,
-  existsInDb,
-  config,
-  socialLinks,
-  branches,
-  wallets,
-  bankAccounts,
+  state,
+  onUpdateState,
+  onResetDefaults,
   onBackToPublic,
 }: AdminDashboardProps) {
+  const { config, socialLinks, branches, wallets, bankAccounts } = state;
   const [activeTab, setActiveTab] = useState<AdminTab>('brand');
   const [draftConfig, setDraftConfig] = useState<SiteConfig>(config);
-  const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(
     null
   );
-  const [authError, setAuthError] = useState<string | null>(null);
 
   const [editingSocial, setEditingSocial] = useState<SocialLink | null>(null);
   const [editingBranch, setEditingBranch] = useState<BranchLocation | null>(null);
@@ -107,62 +72,13 @@ export function AdminDashboard({
     setStatusMessage({ type, text });
     window.setTimeout(() => {
       setStatusMessage((prev) => (prev?.text === text ? null : prev));
-    }, 3200);
+    }, 3000);
   };
 
-  const handleGoogleSignIn = async () => {
-    setAuthError(null);
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (err: unknown) {
-      const code =
-        typeof err === 'object' && err !== null && 'code' in err
-          ? String((err as { code?: unknown }).code)
-          : '';
-      if (code === 'auth/unauthorized-domain') {
-        const host = typeof window !== 'undefined' ? window.location.hostname : '';
-        setAuthError(
-          `هذا النطاق (${host}) غير مضاف بعد في النطاقات المصرح بها داخل Firebase Authentication. افتح إعدادات Firebase وأضف النطاق في Authorized domains.`
-        );
-      } else if (code === 'auth/popup-blocked') {
-        setAuthError('تم حظر نافذة تسجيل الدخول المنبثقة من المتصفح. يرجى السماح بالنوافذ المنبثقة والمحاولة مرة أخرى.');
-      } else {
-        setAuthError(
-          err instanceof Error
-            ? err.message
-            : 'تعذر تسجيل الدخول عبر جوجل، يرجى المحاولة مرة أخرى.'
-        );
-      }
-    }
-  };
-
-  const handleLogout = async () => {
-    await signOut(auth);
-  };
-
-  const handleSeedDatabase = async () => {
-    setSaving(true);
-    try {
-      await seedDemoDataToFirestore();
-      notify('تم حفظ البيانات الافتراضية في قاعدة البيانات بنجاح');
-    } catch {
-      notify('حدث خطأ أثناء حفظ البيانات في قاعدة البيانات', 'err');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleSaveConfig = async (e?: React.FormEvent) => {
+  const handleSaveConfig = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    setSaving(true);
-    try {
-      await saveSiteConfig(draftConfig);
-      notify('تم حفظ إعدادات الهوية والألوان والأقسام بنجاح');
-    } catch {
-      notify('تعذر حفظ الإعدادات، تحقق من الصلاحيات', 'err');
-    } finally {
-      setSaving(false);
-    }
+    onUpdateState((prev) => ({ ...prev, config: draftConfig }));
+    notify('تم حفظ إعدادات الهوية والألوان والأقسام بنجاح');
   };
 
   const handleLogoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -187,208 +103,80 @@ export function AdminDashboard({
     setDraftConfig((prev) => ({ ...prev, sectionOrder: nextOrder }));
   };
 
-  const moveItemOrder = async (
-    type: 'socialLinks' | 'branches' | 'wallets' | 'bankAccounts',
-    items: { id: string }[],
+  const moveArrayItem = <T extends { id: string; order: number }>(
+    list: T[],
     index: number,
     direction: -1 | 1
-  ) => {
+  ): T[] => {
     const target = index + direction;
-    if (target < 0 || target >= items.length) return;
-    const ids = items.map((i) => i.id);
-    const temp = ids[index];
-    ids[index] = ids[target];
-    ids[target] = temp;
-    try {
-      await updateCollectionOrder(type, ids);
-      notify('تم تحديث الترتيب بنجاح');
-    } catch {
-      notify('تعذر تحديث الترتيب', 'err');
-    }
+    if (target < 0 || target >= list.length) return list;
+    const next = [...list];
+    const temp = next[index];
+    next[index] = next[target];
+    next[target] = temp;
+    return next.map((item, idx) => ({ ...item, order: idx }));
   };
 
-  if (authLoading || adminCheckLoading) {
-    return (
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-6">
-        <div className="text-center space-y-3">
-          <div className="w-10 h-10 border-3 border-slate-300 border-t-slate-900 dark:border-slate-700 dark:border-t-white rounded-full animate-spin mx-auto" />
-          <p className="text-sm text-slate-600 dark:text-slate-300">جاري التحقق من صلاحيات الإدارة...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4">
-        <div className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-7 sm:p-8 shadow-sm space-y-6">
-          <div className="w-12 h-12 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 flex items-center justify-center">
-            <ShieldCheck className="w-6 h-6" />
-          </div>
-
-          <div>
-            <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">
-              تسجيل دخول لوحة التحكم
-            </h1>
-            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-              هذه المنطقة مخصصة لإدارة المشروع وتعديل الروابط والفروع والمحافظ. سجّل الدخول بحساب الإدارة (<span dir="ltr" className="font-mono-nums font-semibold">shaheeninfo96@gmail.com</span>) ليتم حفظ التعديلات مباشرة وظهورها في الموقع المنشور.
-            </p>
-          </div>
-
-          {authError && (
-            <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 text-xs text-red-700 dark:text-red-300 space-y-2 leading-relaxed">
-              <p>{authError}</p>
-              {authError.includes('Authorized domains') && (
-                <a
-                  href="https://console.firebase.google.com/project/flowing-lore-0mn89/authentication/settings"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-block underline font-semibold text-red-800 dark:text-red-200"
-                >
-                  فتح إعدادات Authorized domains في Firebase Console
-                </a>
-              )}
-            </div>
-          )}
-
-          <div className="space-y-3">
-            <button
-              type="button"
-              onClick={handleGoogleSignIn}
-              className="w-full min-h-[48px] px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-semibold text-sm flex items-center justify-center gap-2.5 transition-colors"
-            >
-              <LogIn className="w-4 h-4" />
-              <span>تسجيل الدخول بحساب Google</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={onBackToPublic}
-              className="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium text-sm flex items-center justify-center gap-2 transition-colors"
-            >
-              <ArrowRight className="w-4 h-4" />
-              <span>العودة إلى الصفحة العامة</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!isAdmin) {
-    return (
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4">
-        <div className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-7 sm:p-8 shadow-sm space-y-5">
-          <div className="w-12 h-12 rounded-2xl bg-red-50 dark:bg-red-950/50 text-red-600 dark:text-red-400 flex items-center justify-center">
-            <ShieldAlert className="w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-slate-900 dark:text-white">
-              حساب غير مصرح له بالإدارة
-            </h1>
-            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-              تم تسجيل الدخول بالبريد الإلكتروني{' '}
-              <span dir="ltr" className="font-mono-nums font-semibold text-slate-900 dark:text-slate-200">
-                {user.email}
-              </span>{' '}
-              ولكنه لا يملك صلاحية إدارة هذا المشروع.
-            </p>
-          </div>
-          <div className="flex flex-col sm:flex-row gap-3">
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="flex-1 min-h-[44px] px-4 py-2.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-sm font-semibold flex items-center justify-center gap-2"
-            >
-              <LogOut className="w-4 h-4" />
-              <span>تسجيل الخروج</span>
-            </button>
-            <button
-              type="button"
-              onClick={onBackToPublic}
-              className="flex-1 min-h-[44px] px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium flex items-center justify-center gap-2"
-            >
-              <ArrowRight className="w-4 h-4" />
-              <span>الصفحة العامة</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const handleExportJson = () => {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'shaheen-tires-config.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    notify('تم تصدير ملف الإعدادات بنجاح');
+  };
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F17] text-slate-900 dark:text-slate-100">
-      {/* Admin Top Header */}
       <header className="sticky top-0 z-30 h-15 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
         <div className="max-w-6xl mx-auto h-full px-4 sm:px-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <span className="text-base sm:text-lg font-bold text-slate-900 dark:text-white whitespace-nowrap truncate">
-              لوحة تحكم شاهين للإطارات والبطاريات
+              محرر صفحة شاهين للإطارات والبطاريات
             </span>
           </div>
 
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={onBackToPublic}
-              className="min-h-[40px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1.5 whitespace-nowrap"
+              onClick={handleExportJson}
+              className="min-h-[40px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1.5 whitespace-nowrap"
             >
-              <Eye className="w-4 h-4" />
-              <span>معاينة الصفحة</span>
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">تصدير JSON</span>
             </button>
             <button
               type="button"
-              onClick={handleLogout}
-              className="min-h-[40px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 flex items-center gap-1.5 whitespace-nowrap"
+              onClick={onBackToPublic}
+              className="min-h-[40px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold text-white flex items-center gap-1.5 whitespace-nowrap"
+              style={{ backgroundColor: draftConfig.primaryColor }}
             >
-              <LogOut className="w-4 h-4" />
-              <span className="hidden sm:inline">خروج</span>
+              <Eye className="w-4 h-4" />
+              <span>معاينة الصفحة</span>
             </button>
           </div>
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6 pb-20">
-        {/* Seed / Sync Notice */}
-        {!existsInDb ? (
-          <div className="p-5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <Database className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-              <div>
-                <h2 className="text-sm sm:text-base font-bold text-amber-950 dark:text-amber-100">
-                  قاعدة البيانات جاهزة للنشر الأول
-                </h2>
-                <p className="text-xs sm:text-sm text-amber-800 dark:text-amber-300 mt-1">
-                  اضغط على الزر لنشر بيانات شركة شاهين للإطارات والبطاريات والفروع ورقم الواتساب وفودافون كاش في قاعدة البيانات ثم تعديلها بحرية.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={handleSeedDatabase}
-              className="min-h-[44px] px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold shrink-0 disabled:opacity-60 whitespace-nowrap"
-            >
-              {saving ? 'جاري النشر...' : 'نشر البيانات الآن'}
-            </button>
-          </div>
-        ) : (
-          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="text-xs sm:text-sm text-slate-600 dark:text-slate-300">
-              متصل بحساب الإدارة <span dir="ltr" className="font-mono-nums font-semibold text-slate-900 dark:text-white">{user.email}</span> — أي تعديل هنا يظهر مباشرة على الموقع المنشور.
-            </div>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={handleSeedDatabase}
-              className="min-h-[38px] px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-1.5 shrink-0 disabled:opacity-60 whitespace-nowrap"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>{saving ? 'جاري المزامنة...' : 'مزامنة أحدث بيانات شاهين'}</span>
-            </button>
-          </div>
-        )}
+        <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300">
+            وضع التخصيص المحلي بدون قواعد بيانات خارجية — تُحفظ التعديلات في هذا المتصفح ويمكنك تصديرها كملف JSON.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              onResetDefaults();
+              notify('تمت استعادة الإعدادات الافتراضية لشركة شاهين');
+            }}
+            className="min-h-[38px] px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>استعادة الافتراضي</span>
+          </button>
+        </div>
 
         {/* Navigation Tabs */}
         <div className="flex items-center gap-1.5 p-1.5 rounded-2xl bg-slate-200/70 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-x-auto">
@@ -466,9 +254,6 @@ export function AdminDashboard({
                     <span>استعادة شعار SHAHEEN</span>
                   </button>
                 </div>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  يتم ضغط الشعار تلقائيًا لضمان سرعة تحميل عالية.
-                </p>
               </div>
             </div>
 
@@ -589,12 +374,11 @@ export function AdminDashboard({
             <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-end">
               <button
                 type="submit"
-                disabled={saving}
-                className="min-h-[46px] px-6 py-2.5 rounded-xl text-sm font-semibold text-white flex items-center gap-2 disabled:opacity-60"
+                className="min-h-[46px] px-6 py-2.5 rounded-xl text-sm font-semibold text-white flex items-center gap-2"
                 style={{ backgroundColor: draftConfig.primaryColor }}
               >
                 <Save className="w-4 h-4" />
-                <span>{saving ? 'جاري الحفظ...' : 'حفظ الهوية والألوان'}</span>
+                <span>حفظ الهوية والألوان</span>
               </button>
             </div>
           </form>
@@ -746,12 +530,11 @@ export function AdminDashboard({
             <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-end">
               <button
                 type="submit"
-                disabled={saving}
-                className="min-h-[46px] px-6 py-2.5 rounded-xl text-sm font-semibold text-white flex items-center gap-2 disabled:opacity-60"
+                className="min-h-[46px] px-6 py-2.5 rounded-xl text-sm font-semibold text-white flex items-center gap-2"
                 style={{ backgroundColor: draftConfig.primaryColor }}
               >
                 <Save className="w-4 h-4" />
-                <span>{saving ? 'جاري الحفظ...' : 'حفظ الترتيب والتعليمات'}</span>
+                <span>حفظ الترتيب والتعليمات</span>
               </button>
             </div>
           </form>
@@ -793,8 +576,14 @@ export function AdminDashboard({
                 initial={editingSocial}
                 primaryColor={draftConfig.primaryColor}
                 onCancel={() => setEditingSocial(null)}
-                onSave={async (item) => {
-                  await upsertSocialLink(item);
+                onSave={(item) => {
+                  onUpdateState((prev) => {
+                    const exists = prev.socialLinks.some((s) => s.id === item.id);
+                    const socialLinksNext = exists
+                      ? prev.socialLinks.map((s) => (s.id === item.id ? item : s))
+                      : [...prev.socialLinks, item];
+                    return { ...prev, socialLinks: socialLinksNext };
+                  });
                   setEditingSocial(null);
                   notify('تم حفظ رابط التواصل بنجاح');
                 }}
@@ -824,7 +613,14 @@ export function AdminDashboard({
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
-                      onClick={() => upsertSocialLink({ ...link, visible: !link.visible })}
+                      onClick={() =>
+                        onUpdateState((prev) => ({
+                          ...prev,
+                          socialLinks: prev.socialLinks.map((s) =>
+                            s.id === link.id ? { ...s, visible: !s.visible } : s
+                          ),
+                        }))
+                      }
                       className="min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1"
                     >
                       {link.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
@@ -833,7 +629,12 @@ export function AdminDashboard({
                     <button
                       type="button"
                       disabled={idx === 0}
-                      onClick={() => moveItemOrder('socialLinks', socialLinks, idx, -1)}
+                      onClick={() =>
+                        onUpdateState((prev) => ({
+                          ...prev,
+                          socialLinks: moveArrayItem(prev.socialLinks, idx, -1),
+                        }))
+                      }
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
                       aria-label="تحريك لأعلى"
                     >
@@ -842,7 +643,12 @@ export function AdminDashboard({
                     <button
                       type="button"
                       disabled={idx === socialLinks.length - 1}
-                      onClick={() => moveItemOrder('socialLinks', socialLinks, idx, 1)}
+                      onClick={() =>
+                        onUpdateState((prev) => ({
+                          ...prev,
+                          socialLinks: moveArrayItem(prev.socialLinks, idx, 1),
+                        }))
+                      }
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
                       aria-label="تحريك لأسفل"
                     >
@@ -858,8 +664,11 @@ export function AdminDashboard({
                     </button>
                     <button
                       type="button"
-                      onClick={async () => {
-                        await deleteSocialLink(link.id);
+                      onClick={() => {
+                        onUpdateState((prev) => ({
+                          ...prev,
+                          socialLinks: prev.socialLinks.filter((s) => s.id !== link.id),
+                        }));
                         notify('تم حذف الرابط');
                       }}
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-red-200 dark:border-red-900 text-red-600 flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950/30"
@@ -909,8 +718,14 @@ export function AdminDashboard({
                 initial={editingBranch}
                 primaryColor={draftConfig.primaryColor}
                 onCancel={() => setEditingBranch(null)}
-                onSave={async (item) => {
-                  await upsertBranch(item);
+                onSave={(item) => {
+                  onUpdateState((prev) => {
+                    const exists = prev.branches.some((b) => b.id === item.id);
+                    const branchesNext = exists
+                      ? prev.branches.map((b) => (b.id === item.id ? item : b))
+                      : [...prev.branches, item];
+                    return { ...prev, branches: branchesNext };
+                  });
                   setEditingBranch(null);
                   notify('تم حفظ بيانات الفرع بنجاح');
                 }}
@@ -939,7 +754,14 @@ export function AdminDashboard({
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
-                      onClick={() => upsertBranch({ ...branch, visible: !branch.visible })}
+                      onClick={() =>
+                        onUpdateState((prev) => ({
+                          ...prev,
+                          branches: prev.branches.map((b) =>
+                            b.id === branch.id ? { ...b, visible: !b.visible } : b
+                          ),
+                        }))
+                      }
                       className="min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1"
                     >
                       {branch.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
@@ -948,7 +770,12 @@ export function AdminDashboard({
                     <button
                       type="button"
                       disabled={idx === 0}
-                      onClick={() => moveItemOrder('branches', branches, idx, -1)}
+                      onClick={() =>
+                        onUpdateState((prev) => ({
+                          ...prev,
+                          branches: moveArrayItem(prev.branches, idx, -1),
+                        }))
+                      }
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
                       aria-label="تحريك لأعلى"
                     >
@@ -957,7 +784,12 @@ export function AdminDashboard({
                     <button
                       type="button"
                       disabled={idx === branches.length - 1}
-                      onClick={() => moveItemOrder('branches', branches, idx, 1)}
+                      onClick={() =>
+                        onUpdateState((prev) => ({
+                          ...prev,
+                          branches: moveArrayItem(prev.branches, idx, 1),
+                        }))
+                      }
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
                       aria-label="تحريك لأسفل"
                     >
@@ -973,8 +805,11 @@ export function AdminDashboard({
                     </button>
                     <button
                       type="button"
-                      onClick={async () => {
-                        await deleteBranch(branch.id);
+                      onClick={() => {
+                        onUpdateState((prev) => ({
+                          ...prev,
+                          branches: prev.branches.filter((b) => b.id !== branch.id),
+                        }));
                         notify('تم حذف الفرع');
                       }}
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-red-200 dark:border-red-900 text-red-600 flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950/30"
@@ -1007,7 +842,7 @@ export function AdminDashboard({
                     provider: 'vodafone',
                     providerName: 'Vodafone Cash',
                     identifier: '',
-                    ownerName: '',
+                    ownerName: 'أحمد محمد خيري شاهين',
                     showOwnerName: true,
                     note: '',
                     visible: true,
@@ -1027,8 +862,14 @@ export function AdminDashboard({
                 initial={editingWallet}
                 primaryColor={draftConfig.primaryColor}
                 onCancel={() => setEditingWallet(null)}
-                onSave={async (item) => {
-                  await upsertWallet(item);
+                onSave={(item) => {
+                  onUpdateState((prev) => {
+                    const exists = prev.wallets.some((w) => w.id === item.id);
+                    const walletsNext = exists
+                      ? prev.wallets.map((w) => (w.id === item.id ? item : w))
+                      : [...prev.wallets, item];
+                    return { ...prev, wallets: walletsNext };
+                  });
                   setEditingWallet(null);
                   notify('تم حفظ بيانات المحفظة بنجاح');
                 }}
@@ -1057,7 +898,14 @@ export function AdminDashboard({
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
-                      onClick={() => upsertWallet({ ...wallet, visible: !wallet.visible })}
+                      onClick={() =>
+                        onUpdateState((prev) => ({
+                          ...prev,
+                          wallets: prev.wallets.map((w) =>
+                            w.id === wallet.id ? { ...w, visible: !w.visible } : w
+                          ),
+                        }))
+                      }
                       className="min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1"
                     >
                       {wallet.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
@@ -1066,7 +914,12 @@ export function AdminDashboard({
                     <button
                       type="button"
                       disabled={idx === 0}
-                      onClick={() => moveItemOrder('wallets', wallets, idx, -1)}
+                      onClick={() =>
+                        onUpdateState((prev) => ({
+                          ...prev,
+                          wallets: moveArrayItem(prev.wallets, idx, -1),
+                        }))
+                      }
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
                       aria-label="تحريك لأعلى"
                     >
@@ -1075,7 +928,12 @@ export function AdminDashboard({
                     <button
                       type="button"
                       disabled={idx === wallets.length - 1}
-                      onClick={() => moveItemOrder('wallets', wallets, idx, 1)}
+                      onClick={() =>
+                        onUpdateState((prev) => ({
+                          ...prev,
+                          wallets: moveArrayItem(prev.wallets, idx, 1),
+                        }))
+                      }
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
                       aria-label="تحريك لأسفل"
                     >
@@ -1091,8 +949,11 @@ export function AdminDashboard({
                     </button>
                     <button
                       type="button"
-                      onClick={async () => {
-                        await deleteWallet(wallet.id);
+                      onClick={() => {
+                        onUpdateState((prev) => ({
+                          ...prev,
+                          wallets: prev.wallets.filter((w) => w.id !== wallet.id),
+                        }));
                         notify('تم حذف المحفظة');
                       }}
                       className="min-h-[38px] min-w-[38px] rounded-lg border border-red-200 dark:border-red-900 text-red-600 flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950/30"
@@ -1123,7 +984,7 @@ export function AdminDashboard({
                   setEditingBank({
                     id: `bank-${Date.now()}`,
                     bankName: '',
-                    accountHolder: '',
+                    accountHolder: 'أحمد محمد خيري شاهين',
                     accountNumber: '',
                     iban: '',
                     currency: 'EGP - جنيه مصري',
@@ -1145,85 +1006,117 @@ export function AdminDashboard({
                 initial={editingBank}
                 primaryColor={draftConfig.primaryColor}
                 onCancel={() => setEditingBank(null)}
-                onSave={async (item) => {
-                  await upsertBankAccount(item);
+                onSave={(item) => {
+                  onUpdateState((prev) => {
+                    const exists = prev.bankAccounts.some((b) => b.id === item.id);
+                    const banksNext = exists
+                      ? prev.bankAccounts.map((b) => (b.id === item.id ? item : b))
+                      : [...prev.bankAccounts, item];
+                    return { ...prev, bankAccounts: banksNext };
+                  });
                   setEditingBank(null);
                   notify('تم حفظ الحساب البنكي بنجاح');
                 }}
               />
             )}
 
-            <div className="space-y-2.5">
-              {bankAccounts.map((bank, idx) => (
-                <div
-                  key={bank.id}
-                  className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0">
-                      <Landmark className="w-5 h-5" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-bold truncate">
-                        {bank.bankName}{' '}
-                        {!bank.visible && <span className="text-xs text-slate-400">(مخفي)</span>}
+            {bankAccounts.length === 0 ? (
+              <div className="p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center text-sm text-slate-500 dark:text-slate-400">
+                لا توجد حسابات بنكية مضافة حاليًا.
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {bankAccounts.map((bank, idx) => (
+                  <div
+                    key={bank.id}
+                    className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0">
+                        <Landmark className="w-5 h-5" />
                       </div>
-                      <div className="text-xs text-slate-500 truncate">
-                        {bank.accountHolder} · {bank.currency}
+                      <div className="min-w-0">
+                        <div className="text-sm font-bold truncate">
+                          {bank.bankName}{' '}
+                          {!bank.visible && <span className="text-xs text-slate-400">(مخفي)</span>}
+                        </div>
+                        <div className="text-xs text-slate-500 truncate">
+                          {bank.accountHolder} · {bank.currency}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => upsertBankAccount({ ...bank, visible: !bank.visible })}
-                      className="min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1"
-                    >
-                      {bank.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                      <span>{bank.visible ? 'ظاهر' : 'مخفي'}</span>
-                    </button>
-                    <button
-                      type="button"
-                      disabled={idx === 0}
-                      onClick={() => moveItemOrder('bankAccounts', bankAccounts, idx, -1)}
-                      className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
-                      aria-label="تحريك لأعلى"
-                    >
-                      <ArrowUp className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      disabled={idx === bankAccounts.length - 1}
-                      onClick={() => moveItemOrder('bankAccounts', bankAccounts, idx, 1)}
-                      className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
-                      aria-label="تحريك لأسفل"
-                    >
-                      <ArrowDown className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditingBank(bank)}
-                      className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-800"
-                      aria-label="تعديل"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await deleteBankAccount(bank.id);
-                        notify('تم حذف الحساب البنكي');
-                      }}
-                      className="min-h-[38px] min-w-[38px] rounded-lg border border-red-200 dark:border-red-900 text-red-600 flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950/30"
-                      aria-label="حذف"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateState((prev) => ({
+                            ...prev,
+                            bankAccounts: prev.bankAccounts.map((b) =>
+                              b.id === bank.id ? { ...b, visible: !b.visible } : b
+                            ),
+                          }))
+                        }
+                        className="min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center gap-1"
+                      >
+                        {bank.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                        <span>{bank.visible ? 'ظاهر' : 'مخفي'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={idx === 0}
+                        onClick={() =>
+                          onUpdateState((prev) => ({
+                            ...prev,
+                            bankAccounts: moveArrayItem(prev.bankAccounts, idx, -1),
+                          }))
+                        }
+                        className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
+                        aria-label="تحريك لأعلى"
+                      >
+                        <ArrowUp className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={idx === bankAccounts.length - 1}
+                        onClick={() =>
+                          onUpdateState((prev) => ({
+                            ...prev,
+                            bankAccounts: moveArrayItem(prev.bankAccounts, idx, 1),
+                          }))
+                        }
+                        className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center disabled:opacity-30"
+                        aria-label="تحريك لأسفل"
+                      >
+                        <ArrowDown className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingBank(bank)}
+                        className="min-h-[38px] min-w-[38px] rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-800"
+                        aria-label="تعديل"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onUpdateState((prev) => ({
+                            ...prev,
+                            bankAccounts: prev.bankAccounts.filter((b) => b.id !== bank.id),
+                          }));
+                          notify('تم حذف الحساب البنكي');
+                        }}
+                        className="min-h-[38px] min-w-[38px] rounded-lg border border-red-200 dark:border-red-900 text-red-600 flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950/30"
+                        aria-label="حذف"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </main>
@@ -1254,20 +1147,14 @@ function SocialForm({
 }: {
   initial: SocialLink;
   primaryColor: string;
-  onSave: (item: SocialLink) => Promise<void>;
+  onSave: (item: SocialLink) => void;
   onCancel: () => void;
 }) {
   const [form, setForm] = useState<SocialLink>(initial);
-  const [busy, setBusy] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setBusy(true);
-    try {
-      await onSave(form);
-    } finally {
-      setBusy(false);
-    }
+    onSave(form);
   };
 
   return (
@@ -1298,7 +1185,6 @@ function SocialForm({
             type="text"
             required
             maxLength={80}
-            placeholder="مثال: حساب إنستغرام الرسمي"
             value={form.label}
             onChange={(e) => setForm((prev) => ({ ...prev, label: e.target.value }))}
             className="w-full min-h-[42px] px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
@@ -1311,7 +1197,6 @@ function SocialForm({
             dir="ltr"
             required
             maxLength={500}
-            placeholder="https://..."
             value={form.url}
             onChange={(e) => setForm((prev) => ({ ...prev, url: e.target.value }))}
             className="w-full min-h-[42px] px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm font-mono-nums"
@@ -1322,7 +1207,6 @@ function SocialForm({
           <input
             type="text"
             maxLength={120}
-            placeholder="مثال: أحدث المنتجات والعروض"
             value={form.subtitle}
             onChange={(e) => setForm((prev) => ({ ...prev, subtitle: e.target.value }))}
             className="w-full min-h-[42px] px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
@@ -1340,11 +1224,10 @@ function SocialForm({
         </button>
         <button
           type="submit"
-          disabled={busy}
           className="min-h-[40px] px-5 rounded-xl text-xs font-semibold text-white"
           style={{ backgroundColor: primaryColor }}
         >
-          {busy ? 'جاري الحفظ...' : 'حفظ الرابط'}
+          حفظ الرابط
         </button>
       </div>
     </form>
@@ -1359,20 +1242,14 @@ function BranchForm({
 }: {
   initial: BranchLocation;
   primaryColor: string;
-  onSave: (item: BranchLocation) => Promise<void>;
+  onSave: (item: BranchLocation) => void;
   onCancel: () => void;
 }) {
   const [form, setForm] = useState<BranchLocation>(initial);
-  const [busy, setBusy] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setBusy(true);
-    try {
-      await onSave(form);
-    } finally {
-      setBusy(false);
-    }
+    onSave(form);
   };
 
   return (
@@ -1387,7 +1264,6 @@ function BranchForm({
             type="text"
             required
             maxLength={120}
-            placeholder="مثال: الفرع الرئيسي"
             value={form.name}
             onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
             className="w-full min-h-[42px] px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
@@ -1400,7 +1276,6 @@ function BranchForm({
             dir="ltr"
             required
             maxLength={500}
-            placeholder="https://maps.app.goo.gl/..."
             value={form.mapUrl}
             onChange={(e) => setForm((prev) => ({ ...prev, mapUrl: e.target.value }))}
             className="w-full min-h-[42px] px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm font-mono-nums"
@@ -1414,7 +1289,6 @@ function BranchForm({
           type="text"
           required
           maxLength={250}
-          placeholder="مثال: 6 شارع الجلاء بجوار رنين، طنطا"
           value={form.address}
           onChange={(e) => setForm((prev) => ({ ...prev, address: e.target.value }))}
           className="w-full min-h-[42px] px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
@@ -1431,11 +1305,10 @@ function BranchForm({
         </button>
         <button
           type="submit"
-          disabled={busy}
           className="min-h-[40px] px-5 rounded-xl text-xs font-semibold text-white"
           style={{ backgroundColor: primaryColor }}
         >
-          {busy ? 'جاري الحفظ...' : 'حفظ الفرع'}
+          حفظ الفرع
         </button>
       </div>
     </form>
@@ -1450,20 +1323,14 @@ function WalletForm({
 }: {
   initial: WalletAccount;
   primaryColor: string;
-  onSave: (item: WalletAccount) => Promise<void>;
+  onSave: (item: WalletAccount) => void;
   onCancel: () => void;
 }) {
   const [form, setForm] = useState<WalletAccount>(initial);
-  const [busy, setBusy] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setBusy(true);
-    try {
-      await onSave(form);
-    } finally {
-      setBusy(false);
-    }
+    onSave(form);
   };
 
   return (
@@ -1513,7 +1380,6 @@ function WalletForm({
             dir="ltr"
             required
             maxLength={120}
-            placeholder="010... أو name@instapay"
             value={form.identifier}
             onChange={(e) => setForm((prev) => ({ ...prev, identifier: e.target.value }))}
             className="w-full min-h-[42px] px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm font-mono-nums"
@@ -1563,11 +1429,10 @@ function WalletForm({
         </button>
         <button
           type="submit"
-          disabled={busy}
           className="min-h-[40px] px-5 rounded-xl text-xs font-semibold text-white"
           style={{ backgroundColor: primaryColor }}
         >
-          {busy ? 'جاري الحفظ...' : 'حفظ المحفظة'}
+          حفظ المحفظة
         </button>
       </div>
     </form>
@@ -1582,20 +1447,14 @@ function BankForm({
 }: {
   initial: BankAccount;
   primaryColor: string;
-  onSave: (item: BankAccount) => Promise<void>;
+  onSave: (item: BankAccount) => void;
   onCancel: () => void;
 }) {
   const [form, setForm] = useState<BankAccount>(initial);
-  const [busy, setBusy] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setBusy(true);
-    try {
-      await onSave(form);
-    } finally {
-      setBusy(false);
-    }
+    onSave(form);
   };
 
   return (
@@ -1644,7 +1503,6 @@ function BankForm({
             type="text"
             dir="ltr"
             maxLength={80}
-            placeholder="EG..."
             value={form.iban}
             onChange={(e) => setForm((prev) => ({ ...prev, iban: e.target.value }))}
             className="w-full min-h-[42px] px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm font-mono-nums"
@@ -1656,7 +1514,6 @@ function BankForm({
             type="text"
             required
             maxLength={20}
-            placeholder="EGP / SAR / USD"
             value={form.currency}
             onChange={(e) => setForm((prev) => ({ ...prev, currency: e.target.value }))}
             className="w-full min-h-[42px] px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
@@ -1684,11 +1541,10 @@ function BankForm({
         </button>
         <button
           type="submit"
-          disabled={busy}
           className="min-h-[40px] px-5 rounded-xl text-xs font-semibold text-white"
           style={{ backgroundColor: primaryColor }}
         >
-          {busy ? 'جاري الحفظ...' : 'حفظ الحساب'}
+          حفظ الحساب
         </button>
       </div>
     </form>
