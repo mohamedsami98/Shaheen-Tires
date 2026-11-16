@@ -421,6 +421,19 @@ export function PublicHub({
                   </button>
                 </div>
 
+                {wallet.paymentUrl && (
+                  <a
+                    href={wallet.paymentUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-h-[44px] w-full px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-white flex items-center justify-center gap-2 transition-opacity hover:opacity-90 active:scale-[0.99]"
+                    style={{ backgroundColor: '#5B2D90' }}
+                  >
+                    <span>الدفع المباشر عبر {wallet.providerName}</span>
+                    <ArrowUpLeft className="w-4 h-4 shrink-0" />
+                  </a>
+                )}
+
                 {wallet.note && (
                   <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
                     {wallet.note}

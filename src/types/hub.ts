@@ -71,6 +71,7 @@ export interface WalletAccount {
   provider: WalletProvider;
   providerName: string;
   identifier: string;
+  paymentUrl?: string;
   ownerName: string;
   showOwnerName: boolean;
   note: string;
