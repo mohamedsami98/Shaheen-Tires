@@ -118,7 +118,7 @@ export default function App() {
 
   const openPublic = () => {
     if (window.location.pathname.endsWith('/admin')) {
-      window.history.pushState({}, '', '/');
+      window.history.pushState({}, '', import.meta.env.BASE_URL || '/');
     } else {
       window.location.hash = '';
     }
