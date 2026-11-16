@@ -30,7 +30,10 @@ import {
   WalletAccount,
 } from '../types/hub';
 
-const BOOTSTRAPPED_ADMIN_EMAIL = 'sandidodo80@gmail.com';
+const BOOTSTRAPPED_ADMIN_EMAILS = [
+  'shaheeninfo96@gmail.com',
+  'sandidodo80@gmail.com',
+];
 
 function sanitizeString(value: string, maxLength: number): string {
   return (value ?? '').trim().slice(0, maxLength);
@@ -43,7 +46,7 @@ function sanitizeId(id: string): string {
 
 export async function verifyAdminAccess(user: User | null): Promise<boolean> {
   if (!user || !user.emailVerified) return false;
-  if (user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL) {
+  if (BOOTSTRAPPED_ADMIN_EMAILS.includes(user.email?.toLowerCase() ?? '')) {
     return true;
   }
   try {
@@ -424,70 +427,121 @@ export async function seedDemoDataToFirestore(): Promise<void> {
   const uid = auth.currentUser?.uid;
   if (!uid) throw new Error('Unauthorized');
 
-  const batch = writeBatch(db);
-  const configRef = doc(db, 'siteConfig', 'main');
-  batch.set(configRef, buildConfigPayload(DEFAULT_SITE_CONFIG, true));
-
-  DEFAULT_SOCIAL_LINKS.forEach((link) => {
-    batch.set(doc(db, 'socialLinks', link.id), {
-      platform: link.platform,
-      label: link.label,
-      url: link.url,
-      subtitle: link.subtitle,
-      visible: link.visible,
-      order: link.order,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      updatedBy: uid,
-    });
-  });
-
-  DEFAULT_BRANCHES.forEach((branch) => {
-    batch.set(doc(db, 'branches', branch.id), {
-      name: branch.name,
-      address: branch.address,
-      mapUrl: branch.mapUrl,
-      visible: branch.visible,
-      order: branch.order,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      updatedBy: uid,
-    });
-  });
-
-  DEFAULT_WALLETS.forEach((wallet) => {
-    batch.set(doc(db, 'wallets', wallet.id), {
-      provider: wallet.provider,
-      providerName: wallet.providerName,
-      identifier: wallet.identifier,
-      ownerName: wallet.ownerName,
-      showOwnerName: wallet.showOwnerName,
-      note: wallet.note,
-      visible: wallet.visible,
-      order: wallet.order,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      updatedBy: uid,
-    });
-  });
-
-  DEFAULT_BANK_ACCOUNTS.forEach((bank) => {
-    batch.set(doc(db, 'bankAccounts', bank.id), {
-      bankName: bank.bankName,
-      accountHolder: bank.accountHolder,
-      accountNumber: bank.accountNumber,
-      iban: bank.iban,
-      currency: bank.currency,
-      branchName: bank.branchName,
-      visible: bank.visible,
-      order: bank.order,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      updatedBy: uid,
-    });
-  });
-
   try {
+    const batch = writeBatch(db);
+    const configRef = doc(db, 'siteConfig', 'main');
+    const existingConfig = await getDoc(configRef);
+    if (existingConfig.exists()) {
+      batch.update(configRef, buildConfigPayload(DEFAULT_SITE_CONFIG, false));
+    } else {
+      batch.set(configRef, buildConfigPayload(DEFAULT_SITE_CONFIG, true));
+    }
+
+    for (const link of DEFAULT_SOCIAL_LINKS) {
+      const ref = doc(db, 'socialLinks', link.id);
+      const snap = await getDoc(ref);
+      const base = {
+        platform: link.platform,
+        label: link.label,
+        url: link.url,
+        subtitle: link.subtitle,
+        visible: link.visible,
+        order: link.order,
+        updatedAt: serverTimestamp(),
+        updatedBy: uid,
+      };
+      if (snap.exists()) {
+        batch.update(ref, base);
+      } else {
+        batch.set(ref, { ...base, createdAt: serverTimestamp() });
+      }
+    }
+
+    for (const branch of DEFAULT_BRANCHES) {
+      const ref = doc(db, 'branches', branch.id);
+      const snap = await getDoc(ref);
+      const base = {
+        name: branch.name,
+        address: branch.address,
+        mapUrl: branch.mapUrl,
+        visible: branch.visible,
+        order: branch.order,
+        updatedAt: serverTimestamp(),
+        updatedBy: uid,
+      };
+      if (snap.exists()) {
+        batch.update(ref, base);
+      } else {
+        batch.set(ref, { ...base, createdAt: serverTimestamp() });
+      }
+    }
+
+    for (const wallet of DEFAULT_WALLETS) {
+      const ref = doc(db, 'wallets', wallet.id);
+      const snap = await getDoc(ref);
+      const base = {
+        provider: wallet.provider,
+        providerName: wallet.providerName,
+        identifier: wallet.identifier,
+        ownerName: wallet.ownerName,
+        showOwnerName: wallet.showOwnerName,
+        note: wallet.note,
+        visible: wallet.visible,
+        order: wallet.order,
+        updatedAt: serverTimestamp(),
+        updatedBy: uid,
+      };
+      if (snap.exists()) {
+        batch.update(ref, base);
+      } else {
+        batch.set(ref, { ...base, createdAt: serverTimestamp() });
+      }
+    }
+
+    for (const bank of DEFAULT_BANK_ACCOUNTS) {
+      const ref = doc(db, 'bankAccounts', bank.id);
+      const snap = await getDoc(ref);
+      const base = {
+        bankName: bank.bankName,
+        accountHolder: bank.accountHolder,
+        accountNumber: bank.accountNumber,
+        iban: bank.iban,
+        currency: bank.currency,
+        branchName: bank.branchName,
+        visible: bank.visible,
+        order: bank.order,
+        updatedAt: serverTimestamp(),
+        updatedBy: uid,
+      };
+      if (snap.exists()) {
+        batch.update(ref, base);
+      } else {
+        batch.set(ref, { ...base, createdAt: serverTimestamp() });
+      }
+    }
+
+    // Clean up deprecated default items if they existed from an earlier seed
+    const deprecatedDeletes: Array<['socialLinks' | 'wallets' | 'bankAccounts', string]> = [
+      ['socialLinks', 'social-facebook'],
+      ['socialLinks', 'social-instagram'],
+      ['socialLinks', 'social-tiktok'],
+      ['socialLinks', 'social-telegram'],
+      ['socialLinks', 'social-youtube'],
+      ['wallets', 'wallet-orange'],
+      ['wallets', 'wallet-etisalat'],
+      ['wallets', 'wallet-wepay'],
+      ['bankAccounts', 'bank-nbe-demo'],
+      ['bankAccounts', 'bank-cib-demo'],
+    ];
+
+    for (const [col, oldId] of deprecatedDeletes) {
+      const oldRef = doc(db, col, oldId);
+      const snap = await getDoc(oldRef);
+      if (snap.exists()) {
+        batch.delete(oldRef);
+      }
+    }
+
     await batch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, 'seedDemoData');

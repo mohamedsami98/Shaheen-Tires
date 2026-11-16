@@ -7,8 +7,8 @@ import {
 } from '../types/hub';
 
 export const DEFAULT_LOGO_PATH =
-  '/assets/aistudio/WhatsApp_Image_2026-11-16_at_12.42.38_PM_91f3b548.jpeg';
-export const DEFAULT_COVER_PATH = '/src/assets/images/shaheen_tires_cover_1794826271761.jpg';
+  './assets/aistudio/WhatsApp_Image_2026-11-16_at_12.42.38_PM_91f3b548.jpeg';
+export const DEFAULT_COVER_PATH = './src/assets/images/shaheen_tires_cover_1794826271761.jpg';
 
 export const DEFAULT_SITE_CONFIG: SiteConfig = {
   brandName: 'شاهين للإطارات والبطاريات | SHAHEEN',

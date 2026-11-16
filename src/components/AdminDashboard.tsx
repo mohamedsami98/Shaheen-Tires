@@ -114,10 +114,25 @@ export function AdminDashboard({
     setAuthError(null);
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (err) {
-      setAuthError(
-        err instanceof Error ? err.message : 'تعذر تسجيل الدخول عبر جوجل، يرجى المحاولة مرة أخرى.'
-      );
+    } catch (err: unknown) {
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: unknown }).code)
+          : '';
+      if (code === 'auth/unauthorized-domain') {
+        const host = typeof window !== 'undefined' ? window.location.hostname : '';
+        setAuthError(
+          `هذا النطاق (${host}) غير مضاف بعد في النطاقات المصرح بها داخل Firebase Authentication. افتح إعدادات Firebase وأضف النطاق في Authorized domains.`
+        );
+      } else if (code === 'auth/popup-blocked') {
+        setAuthError('تم حظر نافذة تسجيل الدخول المنبثقة من المتصفح. يرجى السماح بالنوافذ المنبثقة والمحاولة مرة أخرى.');
+      } else {
+        setAuthError(
+          err instanceof Error
+            ? err.message
+            : 'تعذر تسجيل الدخول عبر جوجل، يرجى المحاولة مرة أخرى.'
+        );
+      }
     }
   };
 
@@ -216,13 +231,23 @@ export function AdminDashboard({
               تسجيل دخول لوحة التحكم
             </h1>
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-              هذه المنطقة مخصصة لإدارة المشروع وتعديل الروابط والفروع والمحافظ والحسابات البنكية. يرجى تسجيل الدخول بحساب المسؤول المعتمد.
+              هذه المنطقة مخصصة لإدارة المشروع وتعديل الروابط والفروع والمحافظ. سجّل الدخول بحساب الإدارة (<span dir="ltr" className="font-mono-nums font-semibold">shaheeninfo96@gmail.com</span>) ليتم حفظ التعديلات مباشرة وظهورها في الموقع المنشور.
             </p>
           </div>
 
           {authError && (
-            <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 text-xs text-red-700 dark:text-red-300">
-              {authError}
+            <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 text-xs text-red-700 dark:text-red-300 space-y-2 leading-relaxed">
+              <p>{authError}</p>
+              {authError.includes('Authorized domains') && (
+                <a
+                  href="https://console.firebase.google.com/project/flowing-lore-0mn89/authentication/settings"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block underline font-semibold text-red-800 dark:text-red-200"
+                >
+                  فتح إعدادات Authorized domains في Firebase Console
+                </a>
+              )}
             </div>
           )}
 
@@ -325,8 +350,8 @@ export function AdminDashboard({
       </header>
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6 pb-20">
-        {/* Seed Notice if DB is still empty */}
-        {!existsInDb && (
+        {/* Seed / Sync Notice */}
+        {!existsInDb ? (
           <div className="p-5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-start gap-3">
               <Database className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
@@ -335,7 +360,7 @@ export function AdminDashboard({
                   قاعدة البيانات جاهزة للنشر الأول
                 </h2>
                 <p className="text-xs sm:text-sm text-amber-800 dark:text-amber-300 mt-1">
-                  اضغط على الزر لنشر بيانات شركة شاهين للإطارات والبطاريات والفروع ورقم الواتساب في قاعدة البيانات ثم تعديلها بحرية.
+                  اضغط على الزر لنشر بيانات شركة شاهين للإطارات والبطاريات والفروع ورقم الواتساب وفودافون كاش في قاعدة البيانات ثم تعديلها بحرية.
                 </p>
               </div>
             </div>
@@ -346,6 +371,21 @@ export function AdminDashboard({
               className="min-h-[44px] px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold shrink-0 disabled:opacity-60 whitespace-nowrap"
             >
               {saving ? 'جاري النشر...' : 'نشر البيانات الآن'}
+            </button>
+          </div>
+        ) : (
+          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="text-xs sm:text-sm text-slate-600 dark:text-slate-300">
+              متصل بحساب الإدارة <span dir="ltr" className="font-mono-nums font-semibold text-slate-900 dark:text-white">{user.email}</span> — أي تعديل هنا يظهر مباشرة على الموقع المنشور.
+            </div>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={handleSeedDatabase}
+              className="min-h-[38px] px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-1.5 shrink-0 disabled:opacity-60 whitespace-nowrap"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>{saving ? 'جاري المزامنة...' : 'مزامنة أحدث بيانات شاهين'}</span>
             </button>
           </div>
         )}

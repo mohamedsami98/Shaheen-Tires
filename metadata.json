@@ -2,5 +2,7 @@
   "name": "بوابة روابط وحسابات المشروع",
   "description": "صفحة احترافية شاملة لروابط التواصل الاجتماعي وطرق الدفع بالمحافظ الإلكترونية والحسابات البنكية مع لوحة تحكم آمنة.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
